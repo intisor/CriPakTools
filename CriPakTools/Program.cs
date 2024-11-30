@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -11,143 +11,171 @@ namespace CriPakTools
         static void Main(string[] args)
         {
             Console.WriteLine("CriPakTools\n");
-            Console.WriteLine("Based off Falo's code relased on Xentax forums (see readme.txt), modded by Nanashi3 from FuwaNovels.\nInsertion code by EsperKnight\n\n");
+            Console.WriteLine("Based off Falo's code released on Xentax forums (see readme.txt), modded by Nanashi3 from FuwaNovels.\nInsertion code by EsperKnight\n\n");
 
             if (args.Length == 0)
             {
-                Console.WriteLine("CriPakTool Usage:\n");
-                Console.WriteLine("CriPakTool.exe IN_FILE - Displays all contained chunks.\n");
-                Console.WriteLine("CriPakTool.exe IN_FILE EXTRACT_ME - Extracts a file.\n");
-                Console.WriteLine("CriPakTool.exe IN_FILE ALL - Extracts all files.\n");
-                Console.WriteLine("CriPakTool.exe IN_FILE REPLACE_ME REPLACE_WITH [OUT_FILE] - Replaces REPLACE_ME with REPLACE_WITH.  Optional output it as a new CPK file otherwise it's replaced.\n");
+                DisplayUsage();
                 return;
             }
 
             string cpk_name = args[0];
 
-            CPK cpk = new CPK(new Tools());
-            cpk.ReadCPK(cpk_name);
-
-            BinaryReader oldFile = new BinaryReader(File.OpenRead(cpk_name));
-
-            if (args.Length == 1)
+            try
             {
-                List<FileEntry> entries = cpk.FileTable.OrderBy(x => x.FileOffset).ToList();
-                for (int i = 0; i < entries.Count; i++)
+                CPK cpk = new CPK(new Tools());
+                cpk.ReadCPK(cpk_name);
+
+                
+                using (BufferedStream oldFile = new BufferedStream(File.OpenRead(cpk_name)))
+              
                 {
-                    Console.WriteLine(((entries[i].DirName != null) ? entries[i].DirName + "/" : "") + entries[i].FileName);
-                }
-            }
-            else if (args.Length == 2)
-            {
-                string extractMe = args[1];
-
-                List<FileEntry> entries = null;
-
-                entries = (extractMe.ToUpper() == "ALL") ? cpk.FileTable.Where(x => x.FileType == "FILE").ToList() : cpk.FileTable.Where(x => ((x.DirName != null) ? x.DirName + "/" : "") + x.FileName.ToString().ToLower() == extractMe.ToLower()).ToList();
-
-                if (entries.Count == 0)
-                {
-                    Console.WriteLine("Cannot find " + extractMe + ".");
-                }
-
-                for (int i = 0; i < entries.Count; i++)
-                {
-                    if (!String.IsNullOrEmpty((string)entries[i].DirName))
+                    if (args.Length == 1)
                     {
-                        Directory.CreateDirectory(entries[i].DirName.ToString());
+                        DisplayAllChunks(cpk);
                     }
-
-                    oldFile.BaseStream.Seek((long)entries[i].FileOffset, SeekOrigin.Begin);
-                    string isComp = Encoding.ASCII.GetString(oldFile.ReadBytes(8));
-                    oldFile.BaseStream.Seek((long)entries[i].FileOffset, SeekOrigin.Begin);
-
-                    byte[] chunk = oldFile.ReadBytes(Int32.Parse(entries[i].FileSize.ToString()));
-                    if (isComp == "CRILAYLA")
+                    else if (args.Length == 2)
                     {
-                        int size = Int32.Parse((entries[i].ExtractSize ?? entries[i].FileSize).ToString());
-                        chunk = cpk.DecompressCRILAYLA(chunk, size);
+                        ExtractFiles(args[1], cpk, oldFile);
                     }
-
-                    Console.WriteLine("Extracting: " + ((entries[i].DirName != null) ? entries[i].DirName + "/" : "") + entries[i].FileName.ToString());
-                    File.WriteAllBytes(((entries[i].DirName != null) ? entries[i].DirName + "/" : "") + entries[i].FileName.ToString(), chunk);
-                }
-            }
-            else
-            {
-                if (args.Length < 3)
-                {
-                    Console.WriteLine("Usage for insertion CriPakTools IN_CPK REPLACE_THIS REPLACE_WITH [OUT_CPK]");
-                    return;
-                }
-
-                string ins_name = args[1];
-                string replace_with = args[2];
-
-                FileInfo fi = new FileInfo(cpk_name);
-
-                string outputName = fi.FullName + ".tmp";
-                if (args.Length >= 4)
-                {
-                    outputName = fi.DirectoryName + "\\" + args[3];
-                }
-
-                BinaryWriter newCPK = new BinaryWriter(File.OpenWrite(outputName));
-
-                List<FileEntry> entries = cpk.FileTable.OrderBy(x => x.FileOffset).ToList();
-
-                for (int i = 0; i < entries.Count; i++)
-                {
-                    if (entries[i].FileType != "CONTENT")
+                    else
                     {
-
-                        if (entries[i].FileType == "FILE")
+                        if (args.Length < 3)
                         {
-                            // I'm too lazy to figure out how to update the ContextOffset position so this works :)
-                            if ((ulong)newCPK.BaseStream.Position < cpk.ContentOffset)
+                            Console.WriteLine("Usage for insertion CriPakTools IN_CPK REPLACE_THIS REPLACE_WITH [OUT_CPK]");
+                            return;
+                        }
+
+                        string ins_name = args[1];
+                        string replace_with = args[2];
+
+                        InsertFile(cpk_name, cpk, oldFile, ins_name, replace_with, args.Length >= 4 ? args[3] : null);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("An error occurred: " + ex.Message);
+            }
+        }
+
+        static void DisplayUsage()
+        {
+            Console.WriteLine("CriPakTool Usage:\n");
+            Console.WriteLine("CriPakTool.exe IN_FILE - Displays all contained chunks.\n");
+            Console.WriteLine("CriPakTool.exe IN_FILE EXTRACT_ME - Extracts a file.\n");
+            Console.WriteLine("CriPakTool.exe IN_FILE ALL - Extracts all files.\n");
+            Console.WriteLine("CriPakTool.exe IN_FILE REPLACE_ME REPLACE_WITH [OUT_FILE] - Replaces REPLACE_ME with REPLACE_WITH. Optional output it as a new CPK file otherwise it's replaced.\n");
+        }
+
+        static void DisplayAllChunks(CPK cpk)
+        {
+            List<FileEntry> entries = cpk.FileTable.OrderBy(x => x.FileOffset).ToList();
+            foreach (var entry in entries)
+            {
+                Console.WriteLine(((entry.DirName != null) ? entry.DirName + "/" : "") + entry.FileName);
+            }
+        }
+
+        static void ExtractFiles(string extractMe, CPK cpk, BufferedStream oldFile)
+        {
+            List<FileEntry> entries = (extractMe.ToUpper() == "ALL") ? cpk.FileTable.Where(x => x.FileType == "FILE").ToList() : cpk.FileTable.Where(x => ((x.DirName != null) ? x.DirName + "/" : "") + x.FileName.ToLower() == extractMe.ToLower()).ToList();
+
+            if (entries.Count == 0)
+            {
+                Console.WriteLine("Cannot find " + extractMe + ".");
+                return;
+            }
+
+            foreach (var entry in entries)
+            {
+                if (!string.IsNullOrEmpty(entry.DirName))
+                {
+                    Directory.CreateDirectory(entry.DirName);
+                }
+
+                oldFile.Seek((long)entry.FileOffset, SeekOrigin.Begin);
+                string isComp = Encoding.ASCII.GetString(ReadBytes(oldFile, 8));
+                oldFile.Seek((long)entry.FileOffset, SeekOrigin.Begin);
+
+                byte[] chunk = ReadBytes(oldFile, int.Parse(entry.FileSize.ToString()));
+                if (isComp == "CRILAYLA")
+                {
+                    int size = Int32.Parse((entries[i].ExtractSize ?? entries[i].FileSize).ToString());
+                    chunk = cpk.DecompressCRILAYLA(chunk, size);
+                }
+
+                Console.WriteLine("Extracting: " + ((entry.DirName != null) ? entry.DirName + "/" : "") + entry.FileName);
+                File.WriteAllBytes(((entry.DirName != null) ? entry.DirName + "/" : "") + entry.FileName, chunk);
+            }
+        }
+
+        static byte[] ReadBytes(BufferedStream stream, int count)
+        {
+            byte[] buffer = new byte[count];
+            int bytesRead = stream.Read(buffer, 0, count);
+            if (bytesRead != count)
+            {
+                throw new EndOfStreamException();
+            }
+            return buffer;
+        }
+
+        static void InsertFile(string cpk_name, CPK cpk, BufferedStream oldFile, string ins_name, string replace_with, string outputName)
+        {
+            FileInfo fi = new FileInfo(cpk_name);
+            outputName = outputName ?? fi.FullName + ".tmp";
+
+            using (BufferedStream newCPK = new BufferedStream(File.OpenWrite(outputName)))
+            {
+                List<FileEntry> entries = cpk.FileTable.OrderBy(x => x.FileOffset).ToList();
+
+                foreach (var entry in entries)
+                {
+                    if (entry.FileType != "CONTENT")
+                    {
+                        if (entry.FileType == "FILE")
+                        {
+                            if ((ulong)newCPK.Position < cpk.ContentOffset)
                             {
-                                ulong padLength = cpk.ContentOffset - (ulong)newCPK.BaseStream.Position;
-                                for (ulong z = 0; z < padLength; z++)
-                                {
-                                    newCPK.Write((byte)0);
-                                }
+                                ulong padLength = cpk.ContentOffset - (ulong)newCPK.Position;
+                                newCPK.Write(new byte[padLength], 0, (int)padLength);
                             }
                         }
-                        
 
-                        if (entries[i].FileName.ToString() != ins_name)
+                        if (entry.FileSize == null || entry.FileOffset == null || entry.FileName == null)
                         {
-                            oldFile.BaseStream.Seek((long)entries[i].FileOffset, SeekOrigin.Begin);
-                            
-                            entries[i].FileOffset = (ulong)newCPK.BaseStream.Position;
-                            cpk.UpdateFileEntry(entries[i]);
+                            throw new NullReferenceException("Critical properties of the file entry are not initialized.");
+                        }
 
-                            byte[] chunk = oldFile.ReadBytes(Int32.Parse(entries[i].FileSize.ToString()));
-                            newCPK.Write(chunk);
+                        if (entry.FileName.ToString() != ins_name)
+                        {
+                            oldFile.Seek((long)entry.FileOffset, SeekOrigin.Begin);
+                            entry.FileOffset = (ulong)newCPK.Position;
+                            cpk.UpdateFileEntry(entry);
+
+                            byte[] chunk = ReadBytes(oldFile, int.Parse(entry.FileSize.ToString()));
+                            newCPK.Write(chunk, 0, chunk.Length);
                         }
                         else
                         {
                             byte[] newbie = File.ReadAllBytes(replace_with);
-                            entries[i].FileOffset = (ulong)newCPK.BaseStream.Position;
-                            entries[i].FileSize = Convert.ChangeType(newbie.Length, entries[i].FileSizeType);
-                            entries[i].ExtractSize = Convert.ChangeType(newbie.Length, entries[i].FileSizeType);
-                            cpk.UpdateFileEntry(entries[i]);
-                            newCPK.Write(newbie);
+                            entry.FileOffset = (ulong)newCPK.Position;
+                            entry.FileSize = Convert.ChangeType(newbie.Length, entry.FileSizeType);
+                            entry.ExtractSize = Convert.ChangeType(newbie.Length, entry.FileSizeType);
+                            cpk.UpdateFileEntry(entry);
+                            newCPK.Write(newbie, 0, newbie.Length);
                         }
 
-                        if ((newCPK.BaseStream.Position % 0x800) > 0)
+                        if ((newCPK.Position % 0x800) > 0)
                         {
-                            long cur_pos = newCPK.BaseStream.Position;
-                            for (int j = 0; j < (0x800 - (cur_pos % 0x800)); j++)
-                            {
-                                newCPK.Write((byte)0);
-                            }
+                            int padding = (int)(0x800 - (newCPK.Position % 0x800));
+                            newCPK.Write(new byte[padding], 0, padding);
                         }
                     }
                     else
                     {
-                        // Content is special.... just update the position
-                        cpk.UpdateFileEntry(entries[i]);
+                        cpk.UpdateFileEntry(entry);
                     }
                 }
 
@@ -156,16 +184,15 @@ namespace CriPakTools
                 cpk.WriteTOC(newCPK);
                 cpk.WriteETOC(newCPK);
                 cpk.WriteGTOC(newCPK);
+            }
 
-                newCPK.Close();
-                oldFile.Close();
+            oldFile.Close();
 
-                if (args.Length < 4)
-                {
-                    File.Delete(cpk_name);
-                    File.Move(outputName, cpk_name);
-                    File.Delete(outputName);
-                }
+            if (outputName == fi.FullName + ".tmp")
+            {
+                File.Delete(cpk_name);
+                File.Move(outputName, cpk_name);
+                File.Delete(outputName);
             }
         }
     }
